@@ -1,3 +1,5 @@
+# This code is intended to be ran on Arduino Nano RP2040 Connect.
+
 import time
 import random
 from os import getenv
