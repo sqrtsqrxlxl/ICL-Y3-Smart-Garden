@@ -3,6 +3,7 @@
 import time
 import random
 from os import getenv
+from datetime import datetime
 
 import adafruit_connection_manager
 import adafruit_requests
@@ -12,6 +13,7 @@ import digitalio
 import analogio
 from digitalio import DigitalInOut
 import adafruit_dht
+import minigame
 
 from adafruit_esp32spi import adafruit_esp32spi
 from adafruit_io.adafruit_io import IO_HTTP, AdafruitIO_RequestError
@@ -21,6 +23,8 @@ ssid = getenv("CIRCUITPY_WIFI_SSID")
 password = getenv("CIRCUITPY_WIFI_PASSWORD")
 aio_username = getenv("ADAFRUIT_AIO_USERNAME")
 aio_key = getenv("ADAFRUIT_AIO_KEY")
+
+
 
 # ---- Declare every feed in one place ----
 # "out" = board sends values up;  "in" = board reads values from dashboard.
@@ -114,7 +118,7 @@ def get_health():
     ph = read_ph()
 
     if moisture < 1000:
-        return "Move me! My soil is too dry!"
+        return "Water me! My soil is too dry!"
     elif temperature > 30:
         return "Move me! I'm too hot!"
     elif humidity < 20:
@@ -133,6 +137,8 @@ SENSOR_READERS = {
     "health_status": get_health,
 }
 
+ALARMS = [(8, 0)] # List of (hour, minute) tuples indicating when the minigame alarm should trigger.
+
 while True:
     try:
         # Send every "out" feed.
@@ -142,8 +148,19 @@ while True:
                 io.send_data(feeds[key]["key"], value)
                 print(f"  -> {key} = {value}")
 
+        # If the moisture level is low (i.e. the herb needs watering), 
+        # trigger the pump and send a notification to the user.
+
+        if read_moisture() < 1000:
+            pump_water()
+
         # TODO: A minigame function. Triggers as an alarm at a given time of the day.
         # When triggered, a piezoelectric buzzer will sound until the player successfully completes the minigame.
+
+        now = datetime.now()
+        for hour, minute in ALARMS:
+            if now.hour == hour and now.minute == minute and (abs(now.second) < 2 or abs(now.second - 60) < 2): # crude way to ensure the alarm triggers for a few seconds, not just one loop iteration.
+                minigame.memory_game()
 
         # TODO: Sends an notification to the user if any of the sensor readings are outside the healthy range.
         # Implementation TBD (X? Discord? SMS? Email?).

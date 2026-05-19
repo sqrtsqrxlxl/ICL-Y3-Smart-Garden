@@ -49,9 +49,9 @@ buttons = [btn0, btn1, btn2, btn3]
 # SETTINGS
 # -------------------------
 
-SEQUENCE_LENGTH = 5
-FLASH_TIME = 0.5
-DEBOUNCE_TIME = 0.2
+SEQUENCE_LENGTH = 7
+FLASH_TIME = 0.4
+DEBOUNCE_TIME = 0.05
 
 # -------------------------
 # FUNCTIONS
@@ -90,7 +90,7 @@ def show_sequence(sequence):
 def get_player_input():
     presses = []
 
-    while len(presses) <= SEQUENCE_LENGTH:
+    while len(presses) < SEQUENCE_LENGTH:
 
         for i, button in enumerate(buttons):
 
@@ -104,7 +104,7 @@ def get_player_input():
                 print("Pressed:", led_colors[i])
 
                 # Debounce
-                time.sleep(DEBOUNCE_TIME)
+                # time.sleep(DEBOUNCE_TIME)
 
                 # Wait until button released
                 while not button.value:
@@ -116,52 +116,59 @@ def get_player_input():
 # MAIN GAME LOOP
 # -------------------------
 
-while True:
+def memory_game():
 
-    correct = False
+    while True:
 
-    # Generate new sequence
-    sequence = generate_sequence()
+        correct = False
 
-    print("Sequence:", sequence)
+        # Generate new sequence
+        sequence = generate_sequence()
 
-    startup_flash()
+        print("Sequence:", sequence)
 
-    # Show pattern
-    show_sequence(sequence)
+        startup_flash()
 
-    # Get player answer
-    player_input = get_player_input()
+        # Show pattern
+        show_sequence(sequence)
 
-    print("Player:", player_input)
+        # Get player answer
+        player_input = get_player_input()
 
-    # Check answer
-    if player_input == sequence:
+        print("Player:", player_input)
 
-        print("YOU PASS")
+        # Check answer
+        if player_input == sequence:
 
-        # Success flash
-        for i in range(3):
-            for led in leds:
-                led.value = True
+            print("YOU PASS")
 
-            time.sleep(0.2)
+            # Success flash
+            for i in range(3):
+                for led in leds:
+                    led.value = True
 
-            for led in leds:
-                led.value = False
+                time.sleep(0.2)
 
-            time.sleep(0.2)
+                for led in leds:
+                    led.value = False
 
-    else:
+                time.sleep(0.2)
 
-        print("FAIL")
+            break
 
-        # Failure flash
-        for i in range(3):
-            led0.value = True
-            time.sleep(0.2)
-            led0.value = False
-            time.sleep(0.2)
+        else:
 
-    # Pause before next round
-    time.sleep(2)
+            print("FAIL")
+
+            # Failure flash
+            for i in range(3):
+                led0.value = True
+                time.sleep(0.2)
+                led0.value = False
+                time.sleep(0.2)
+
+        # Pause before next round
+        time.sleep(2)
+        
+        
+memory_game()
