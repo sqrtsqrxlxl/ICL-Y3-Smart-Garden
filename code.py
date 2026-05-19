@@ -89,8 +89,8 @@ feeds = {}
 for key in FEEDS:
     try:
         feeds[key] = io.get_feed(key)
-    except AdafruitIO_RequestError:
-        feeds[key] = io.create_new_feed(key)
+    except Exception as e:
+        print("Unexpected error in key ", key, ": ", e)
     print("Ready:", feeds[key]["key"], "(", FEEDS[key], ")")
 
 # ---- Local hardware ----
@@ -143,25 +143,36 @@ def get_health():
     temperature = read_temperature()
     humidity = read_humidity()
     ph = read_ph()
+    return_string = []
+    status_boolean = not (moisture < 0.5 or moisture > 0.7 or temperature > 24 or temperature < 15 or humidity < 40 or humidity > 60 or ph < 5.5 or ph > 7.5)
+
 
     if moisture < 0.5:
-        return "Water me! My soil is too dry!"
+        return_string.append("Water me! My soil is too dry!")
     if moisture > 0.7:
-        return "Don't water me! My soil is too wet!"
-    elif temperature > 24:
-        return "Move me! I'm too hot!"
-    elif temperature < 15:
-        return "Move me! I'm too cold!"
-    elif humidity < 40:
-        return "Move me! My humidity is too low!"
-    elif humidity > 60:
-        return "Move me! My humidity is too high!"
-    elif ph < 5.5:
-        return "Adjust my soil! I'm too acidic!"
-    elif ph > 7.5:
-        return "Adjust my soil! I'm too alkaline!"
-    else:
-        return "I'm happy and healthy!"
+        return_string.append("Don't water me! My soil is too wet!") 
+    if temperature > 24:
+        return_string.append("Move me! I'm too hot!")
+    if temperature < 15:
+        return_string.append("Move me! I'm too cold!")
+    if humidity < 40:
+        return_string.append("Move me! My humidity is too low!")
+    if humidity > 60:
+        return_string.append("Move me! My humidity is too high!")
+    if ph < 5.5:
+        return_string.append("Adjust my soil! I'm too acidic!")
+    if ph > 7.5:
+        return_string.append("Adjust my soil! I'm too alkaline!")
+    if status_boolean:
+        return_string.append("I'm happy and healthy!")
+
+    return_message = ""
+
+    for messages in return_string:
+        return_message += messages + "\n"
+
+    return_message = return_message.strip() # Remove trailing newline
+    return return_message
 
 def get_health_boolean():
     """Returns a boolean indicating whether the herb is healthy based on sensor readings."""
@@ -170,8 +181,8 @@ def get_health_boolean():
     humidity = read_humidity()
     ph = read_ph()
 
-    return not (moisture < 1000 or temperature > 29 or temperature < 10 or humidity < 20 or ph < 5.5 or ph > 7.5)
-
+    status_boolean = not (moisture < 0.5 or moisture > 0.7 or temperature > 24 or temperature < 15 or humidity < 40 or humidity > 60 or ph < 5.5 or ph > 7.5)
+    return status_boolean
 
 SENSOR_READERS = {
     "moisture":    read_moisture,
@@ -185,7 +196,7 @@ SENSOR_READERS = {
 
 ALARMS = [(8, 0)] # List of (hour, minute) tuples indicating when the minigame alarm should trigger.
 WATER_INTERVAL = 60 * 60 # Water every 1 hour (3600 seconds)
-last_watered_time = 0
+last_watered_time = time.monotonic() - WATER_INTERVAL  # Initialize to allow immediate watering on startup
 
 while True:
     try:
@@ -199,7 +210,7 @@ while True:
         # If the moisture level is low (i.e. the herb needs watering),
         # trigger the pump and send a notification to the user.
 
-        if read_moisture() < 1000 and (time.monotonic() - last_watered_time > WATER_INTERVAL):
+        if read_moisture() < 0.5 and (time.monotonic() - last_watered_time > WATER_INTERVAL):
             pump_water()
             last_watered_time = time.monotonic()
 
