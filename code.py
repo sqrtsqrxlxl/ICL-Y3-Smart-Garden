@@ -70,6 +70,8 @@ def reconnect(retries=3):
     for attempt in range(1, retries + 1):
         try:
             print(f"Reconnect attempt {attempt}/{retries}...")
+            esp.reset()           # hard-reset the SPI co-processor first
+            time.sleep(1)
             connect_wifi()
             return True  # Success
         except Exception as e:
@@ -87,10 +89,13 @@ io = IO_HTTP(aio_username, aio_key, requests)
 # Verify/create each feed once, up front.
 feeds = {}
 for key in FEEDS:
-    try:
-        feeds[key] = io.get_feed(key)
-    except Exception as e:
-        print("Unexpected error in key ", key, ": ", e)
+    while True:
+        try:
+            feeds[key] = io.get_feed(key)
+            break
+        except Exception as e:
+            print("Unexpected error in key ", key, ": ", e)
+            time.sleep(1)
     print("Ready:", feeds[key]["key"], "(", FEEDS[key], ")")
 
 # ---- Local hardware ----
@@ -130,8 +135,11 @@ def pump_water():
     return "Herb watered"
     
 def pump_status():
-    """Returns pump status"""
-    return "ON" if pump_hardware.value else "OFF"
+    """Returns time since last watering in minutes and seconds"""
+    elapsed_time = time.monotonic() - last_watered_time
+    minutes = int(elapsed_time // 60)
+    seconds = int(elapsed_time % 60)
+    return f"{minutes}:{seconds:02d}"
 
 def get_status():
     """Returns a string indicating the system's operational status."""
@@ -231,21 +239,30 @@ while True:
             print("Sending health alert notification to user... (TODO)")
             print(get_health())
 
-    except OSError as e:
-        # Likely an ESP32 SPI / WiFi failure
+    except (OSError, TimeoutError) as e:
+        # Likely an ESP32 SPI / WiFi failure — reconnect FIRST, then report status
         print("Network/ESP32 error:", e)
-        io.send_data(feeds["status"]["key"], 2)
         reconnect()  # Reset ESP32 and reconnect; reboots board if unrecoverable
+        try:
+            io.send_data(feeds["status"]["key"], 2)
+        except Exception as send_err:
+            print("  could not report status after reconnect:", send_err)
 
     except RuntimeError as e:
         # DHT11 often throws RuntimeError on a bad read — just skip this cycle
-        io.send_data(feeds["status"]["key"], 2)
         print("Sensor read error (skipping cycle):", e)
+        try:
+            io.send_data(feeds["status"]["key"], 2)
+        except Exception as send_err:
+            print("  could not report status:", send_err)
 
     except Exception as e:
         # Anything else unexpected — log it and reboot to be safe
-        io.send_data(feeds["status"]["key"], 2)
         print("Unexpected error:", e)
+        try:
+            io.send_data(feeds["status"]["key"], 2)
+        except Exception:
+            pass
         time.sleep(2)
         microcontroller.reset()
 
