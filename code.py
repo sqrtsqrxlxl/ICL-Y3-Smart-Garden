@@ -3,7 +3,6 @@
 import time
 import random
 from os import getenv
-from datetime import datetime
 
 import adafruit_connection_manager
 import adafruit_requests
@@ -13,7 +12,8 @@ import digitalio
 import analogio
 from digitalio import DigitalInOut
 import adafruit_dht
-import minigame
+import microcontroller
+from minigame import memory_game
 
 from adafruit_esp32spi import adafruit_esp32spi
 from adafruit_io.adafruit_io import IO_HTTP, AdafruitIO_RequestError
@@ -24,17 +24,16 @@ password = getenv("CIRCUITPY_WIFI_PASSWORD")
 aio_username = getenv("ADAFRUIT_AIO_USERNAME")
 aio_key = getenv("ADAFRUIT_AIO_KEY")
 
-
-
 # ---- Declare every feed in one place ----
 # "out" = board sends values up;  "in" = board reads values from dashboard.
 FEEDS = {
     "moisture":    "out",
     "temperature": "out",
     "humidity":    "out",
-    "hydraulic_pump": "out",
+    "hydraulic-pump": "out",
     "ph": "out",
     "status": "out",
+    "health-status": "out",
 }
 
 # ---- ESP32 SPI setup (unchanged) ----
@@ -53,15 +52,34 @@ pool        = adafruit_connection_manager.get_radio_socketpool(esp)
 ssl_context = adafruit_connection_manager.get_radio_ssl_context(esp)
 requests    = adafruit_requests.Session(pool, ssl_context)
 
+
 # ---- Wi-Fi ----
-print("Connecting to Wi-Fi...")
-while not esp.is_connected:
-    try:
-        esp.connect_AP(ssid, password)
-    except OSError as e:
-        print("  retrying:", e)
-        continue
-print("Connected:", esp.ap_info.ssid, "IP:", esp.ipv4_address)
+def connect_wifi():
+    print("Connecting to Wi-Fi...")
+    while not esp.is_connected:
+        try:
+            esp.connect_AP(ssid, password)
+        except OSError as e:
+            print("  retrying:", e)
+            continue
+    print("Connected:", esp.ap_info.ssid, "IP:", esp.ipv4_address)
+
+def reconnect(retries=3):
+    """Attempt to reset and reconnect the ESP32. If it fails after
+    `retries` attempts, do a full microcontroller reset."""
+    for attempt in range(1, retries + 1):
+        try:
+            print(f"Reconnect attempt {attempt}/{retries}...")
+            connect_wifi()
+            return True  # Success
+        except Exception as e:
+            print("  failed:", e)
+            time.sleep(2)
+    print("ESP32 unrecoverable. Rebooting microcontroller...")
+    time.sleep(1)
+    microcontroller.reset()  # Full board reset — restarts code.py from scratch
+
+connect_wifi()
 
 # ---- Adafruit IO ----
 io = IO_HTTP(aio_username, aio_key, requests)
@@ -76,16 +94,18 @@ for key in FEEDS:
     print("Ready:", feeds[key]["key"], "(", FEEDS[key], ")")
 
 # ---- Local hardware ----
-pump_hardware = digitalio.DigitalInOut(board.A0)
+pump_hardware = digitalio.DigitalInOut(board.D12)
 pump_hardware.direction = digitalio.Direction.OUTPUT
-moisture_sensor = analogio.AnalogIn(board.A1)
+moisture_sensor = analogio.AnalogIn(board.A0)
 ph_sensor = analogio.AnalogIn(board.A2)
-dht_sensor = adafruit_dht.DHT11(board.D3) # DHT11 is used for both temperature and humidity.
+dht_sensor = adafruit_dht.DHT11(board.A1) # DHT11 is used for both temperature and humidity.
 
 
 def read_moisture():
     """Returns a calculated relative moisture level as measured by the sensor."""
-    return moisture_sensor.value
+    moisture_relative = moisture_sensor.value * 3.3 / 65535  # Convert raw sensor value to voltage
+    moisture = (moisture_relative + 0.03) / 1.92 
+    return round(moisture, 2)
 
 def read_temperature():
     """Returns the Temperature in Celsius as measured by the sensor."""
@@ -97,7 +117,10 @@ def read_humidity():
 
 def read_ph():
     """Returns the pH level as measured by the sensor."""
-    return ph_sensor.value
+    pH_sensor = ph_sensor.value
+    # Convert the raw sensor value to a pH level (this is a simplified example;
+    pH = (pH_sensor * 3.3 / 65535) * 3.5 + 2.64  # Scale to 0-14
+    return round(pH, 2)
 
 def pump_water():
     """Activates the pump for 10 seconds to water the herb, then turns it off."""
@@ -105,10 +128,14 @@ def pump_water():
     time.sleep(10)
     pump_hardware.value = False
     return "Herb watered"
+    
+def pump_status():
+    """Returns pump status"""
+    return "ON" if pump_hardware.value else "OFF"
 
 def get_status():
     """Returns a string indicating the system's operational status."""
-    return "All good"
+    return 0
 
 def get_health():
     """Returns a string indicating the health status of the herb based on sensor readings."""
@@ -117,27 +144,48 @@ def get_health():
     humidity = read_humidity()
     ph = read_ph()
 
-    if moisture < 1000:
+    if moisture < 0.5:
         return "Water me! My soil is too dry!"
-    elif temperature > 30:
+    if moisture > 0.7:
+        return "Don't water me! My soil is too wet!"
+    elif temperature > 24:
         return "Move me! I'm too hot!"
-    elif humidity < 20:
+    elif temperature < 15:
+        return "Move me! I'm too cold!"
+    elif humidity < 40:
         return "Move me! My humidity is too low!"
+    elif humidity > 60:
+        return "Move me! My humidity is too high!"
+    elif ph < 5.5:
+        return "Adjust my soil! I'm too acidic!"
+    elif ph > 7.5:
+        return "Adjust my soil! I'm too alkaline!"
     else:
         return "I'm happy and healthy!"
-    
+
+def get_health_boolean():
+    """Returns a boolean indicating whether the herb is healthy based on sensor readings."""
+    moisture = read_moisture()
+    temperature = read_temperature()
+    humidity = read_humidity()
+    ph = read_ph()
+
+    return not (moisture < 1000 or temperature > 29 or temperature < 10 or humidity < 20 or ph < 5.5 or ph > 7.5)
+
 
 SENSOR_READERS = {
     "moisture":    read_moisture,
     "temperature": read_temperature,
     "humidity":    read_humidity,
-    "hydraulic_pump": pump_water,
+    "hydraulic-pump": pump_status,
     "ph": read_ph,
     "status": get_status,
-    "health_status": get_health,
+    "health-status": get_health,
 }
 
 ALARMS = [(8, 0)] # List of (hour, minute) tuples indicating when the minigame alarm should trigger.
+WATER_INTERVAL = 60 * 60 # Water every 1 hour (3600 seconds)
+last_watered_time = 0
 
 while True:
     try:
@@ -148,24 +196,46 @@ while True:
                 io.send_data(feeds[key]["key"], value)
                 print(f"  -> {key} = {value}")
 
-        # If the moisture level is low (i.e. the herb needs watering), 
+        # If the moisture level is low (i.e. the herb needs watering),
         # trigger the pump and send a notification to the user.
 
-        if read_moisture() < 1000:
+        if read_moisture() < 1000 and (time.monotonic() - last_watered_time > WATER_INTERVAL):
             pump_water()
+            last_watered_time = time.monotonic()
 
         # TODO: A minigame function. Triggers as an alarm at a given time of the day.
         # When triggered, a piezoelectric buzzer will sound until the player successfully completes the minigame.
 
-        now = datetime.now()
+        now = time.localtime()
         for hour, minute in ALARMS:
-            if now.hour == hour and now.minute == minute and (abs(now.second) < 2 or abs(now.second - 60) < 2): # crude way to ensure the alarm triggers for a few seconds, not just one loop iteration.
-                minigame.memory_game()
+            if now.tm_hour == hour and now.tm_minute == minute and (abs(now.tm_second) < 30 or abs(now.tm_second - 60) < 30): # crude way to ensure the alarm triggers for a few seconds, not just one loop iteration.
+                print("Alarm! Wake up! Send a notification to the user... (TODO)")
+                memory_game()
+                print("Minigame completed! Alarm deactivated.")
 
         # TODO: Sends an notification to the user if any of the sensor readings are outside the healthy range.
         # Implementation TBD (X? Discord? SMS? Email?).
-    except Exception as e:
-        print("IO error:", e)
-        io.send_data(feeds["status"]["key"], 2) # 2 = error. Dashboard judgement logic: All good if status < 2.
 
-    time.sleep(2)
+        if not get_health_boolean():
+            print("Sending health alert notification to user... (TODO)")
+            print(get_health())
+
+    except OSError as e:
+        # Likely an ESP32 SPI / WiFi failure
+        print("Network/ESP32 error:", e)
+        io.send_data(feeds["status"]["key"], 2)
+        reconnect()  # Reset ESP32 and reconnect; reboots board if unrecoverable
+
+    except RuntimeError as e:
+        # DHT11 often throws RuntimeError on a bad read — just skip this cycle
+        io.send_data(feeds["status"]["key"], 2)
+        print("Sensor read error (skipping cycle):", e)
+
+    except Exception as e:
+        # Anything else unexpected — log it and reboot to be safe
+        io.send_data(feeds["status"]["key"], 2)
+        print("Unexpected error:", e)
+        time.sleep(2)
+        microcontroller.reset()
+
+    time.sleep(30)
