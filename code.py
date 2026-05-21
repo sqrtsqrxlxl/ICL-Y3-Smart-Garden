@@ -13,6 +13,8 @@ import analogio
 from digitalio import DigitalInOut
 import adafruit_dht
 import microcontroller
+
+# Imports the memory minigame from minigame.py.
 from minigame import memory_game
 
 from adafruit_esp32spi import adafruit_esp32spi
@@ -64,6 +66,17 @@ def connect_wifi():
             continue
     print("Connected:", esp.ap_info.ssid, "IP:", esp.ipv4_address)
 
+# This is the reconnection function in case there was a network failure.
+# In practice, the ESP32's Wi-Fi connection was extremely unstable,
+# In 80% of the time, the ESP32 module would fail to connect to arduino.
+# Therefore this function is here to recover the program in case of network failure, without crashing the entire program.
+
+# The network instability is not a code issue, but more likely either a hardware issue or a server-side issue with Adafruit IO.
+
+# It is suggested that for smooth engineering and testing experience,
+# Either the Arduino RP2040 Connect board should be replaced with a more stable one,
+# Or another IoT platform with better server stability should be used instead of Adafruit IO.
+
 def reconnect(retries=3):
     """Attempt to reset and reconnect the ESP32. If it fails after
     `retries` attempts, do a full microcontroller reset."""
@@ -105,7 +118,7 @@ moisture_sensor = analogio.AnalogIn(board.A0)
 ph_sensor = analogio.AnalogIn(board.A2)
 dht_sensor = adafruit_dht.DHT11(board.A1) # DHT11 is used for both temperature and humidity.
 
-
+# ---- Functions ----
 def read_moisture():
     """Returns a calculated relative moisture level as measured by the sensor."""
     moisture_relative = moisture_sensor.value * 3.3 / 65535  # Convert raw sensor value to voltage
@@ -173,7 +186,6 @@ def get_health():
         return_string.append("Adjust my soil! I'm too alkaline!")
     if status_boolean:
         return_string.append("I'm happy and healthy!")
-
     return_message = ""
 
     for messages in return_string:
@@ -202,13 +214,21 @@ SENSOR_READERS = {
     "health-status": get_health,
 }
 
+# ---- Global variables ----
 ALARMS = [(8, 0)] # List of (hour, minute) tuples indicating when the minigame alarm should trigger.
 WATER_INTERVAL = 60 * 60 # Water every 1 hour (3600 seconds)
 last_watered_time = time.monotonic() - WATER_INTERVAL  # Initialize to allow immediate watering on startup
 
+# ---- Main loop ----
 while True:
     try:
-        # Send every "out" feed.
+        # Send sensor readings to Adafruit IO for each "out" feed.
+        # So that the dashboard can display them and trigger automations based on them.
+
+        # Currently, the notification function is achieved by Adafruit IO's "Action" panel. 
+        # Whenever the "health-status" feed updates, and if it's not "I'm happy and healthy!", 
+        # it sends a notification to the user with the content of the feed (which is the health status message).
+
         for key, direction in FEEDS.items():
             if direction == "out":
                 value = SENSOR_READERS[key]()
@@ -216,28 +236,34 @@ while True:
                 print(f"  -> {key} = {value}")
 
         # If the moisture level is low (i.e. the herb needs watering),
+        # And if it's been more than WATER_INTERVAL seconds since the last watering,
         # trigger the pump and send a notification to the user.
 
         if read_moisture() < 0.5 and (time.monotonic() - last_watered_time > WATER_INTERVAL):
             pump_water()
             last_watered_time = time.monotonic()
 
-        # TODO: A minigame function. Triggers as an alarm at a given time of the day.
-        # When triggered, a piezoelectric buzzer will sound until the player successfully completes the minigame.
+        # A minigame function. Triggers as an alarm at a given time of the day.
+        # When triggered, the player have to complete the minigame.
 
         now = time.localtime()
         for hour, minute in ALARMS:
             if now.tm_hour == hour and now.tm_minute == minute and (abs(now.tm_second) < 30 or abs(now.tm_second - 60) < 30): # crude way to ensure the alarm triggers for a few seconds, not just one loop iteration.
-                print("Alarm! Wake up! Send a notification to the user... (TODO)")
+                print("Alarm! Wake up! Send a notification to the user...")
                 memory_game()
                 print("Minigame completed! Alarm deactivated.")
 
-        # TODO: Sends an notification to the user if any of the sensor readings are outside the healthy range.
-        # Implementation TBD (X? Discord? SMS? Email?).
+        # Sends an notification to the user if any of the sensor readings are outside the healthy range.
+        # The print function is left here so that in the future it could be hooked up with python libraries or services
+        # which support sending notifications to the user (e.g. Pushbullet, Twilio, Pushover, etc.)
 
         if not get_health_boolean():
-            print("Sending health alert notification to user... (TODO)")
+            print("Sending health alert notification to user...")
             print(get_health())
+
+    # Below are error handling blocks so that the Adruino can recover gracefully 
+    # from common issues like network failures or sensor read errors, 
+    # without crashing the entire program.
 
     except (OSError, TimeoutError) as e:
         # Likely an ESP32 SPI / WiFi failure — reconnect FIRST, then report status
@@ -266,4 +292,31 @@ while True:
         time.sleep(2)
         microcontroller.reset()
 
+    # Due to adafruit IO's rate limits, we can only send a certain number of updates per minute.
+    # Currently it's twice every minute.
+
     time.sleep(30)
+
+# Footnotes
+
+# The connectivity was very poor throughout the development process,
+# And in reality, we never got the program to run stably for more than 1 minute
+# Without it crashing due to network issues.
+# I have attempted to implement various error handling and reconnection strategies to mitigate this issue,
+# But the underlying instability of the ESP32's Wi-Fi connection on this board made it very
+# difficult to achieve a fully stable and smooth user experience.
+
+# There were also issues with hardwares, especially the hydraulic pump,
+# Which is extremely unstable and unreliable, not wishing to turn on 99% of the time,
+# And how we turn it on is by fidgeting with the wires,
+# Making the stability a complete mystery.
+
+# Herbs purchased from supermarkets were normally overcrowded,
+# And we should be notified that it would be ideal to transplant only one herb
+# To a pot of our own, otherwise the herb would in theory die within a few days
+# Due to overcrowding and competition for resources.
+# Or on the contrary, the teaching assistant might want to transplant the herbs for the groups
+# to ensure the herbs' survival.
+
+# In reality, it would be suggested that this project should be 
+# implemented on a more stable IoT platform, or with a more stable Wi-Fi module than the ESP32 on this board.
